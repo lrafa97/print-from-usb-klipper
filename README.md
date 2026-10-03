@@ -19,6 +19,8 @@ commercial printer does. Works with Mainsail, Fluidd and KlipperScreen.
 - Klipper and Moonraker installed in the default layout (`~/printer_data`,
   `~/moonraker`), for example via KIAUH
 - A kernel with exFAT and NTFS support (any recent Raspberry Pi OS)
+- No other USB automounter: if the `usbmount` package is present, the installer
+  removes it, because it conflicts (reboot once afterwards)
 
 ## Install
 

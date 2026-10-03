@@ -35,6 +35,14 @@ for p in "$PRINTER_DATA/config/printer.cfg" "$PRINTER_DATA/config/moonraker.conf
                      echo "(override with PRINTER_DATA=... or MOONRAKER_DIR=...)" >&2; exit 1; }
 done
 
+# 'usbmount' (found on some printer images) mounts sticks inside udev's private
+# mount namespace, which makes our own mount fail with "mount point busy".
+if dpkg -s usbmount >/dev/null 2>&1; then
+  echo "==> Removing 'usbmount' (conflicts with this tool)"
+  apt-get purge -y usbmount
+  echo "    Reboot once after the install so no stale mount is left behind."
+fi
+
 echo "==> System files"
 # Copied to a root-owned location: root never executes anything the user can edit
 install -d "$LIB"

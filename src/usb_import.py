@@ -56,9 +56,51 @@ class UsbImport:
         self.usb_dir = config.get("usb_dir", "USB").strip("/")
         self.import_dir = config.get("import_dir", "Imported").strip("/")
         self.lock = asyncio.Lock()
+        self._watch_task: Optional[asyncio.Task] = None
         self.server.register_remote_method(
             "usb_import_print", self._on_print_request
         )
+
+    # ------------------------------------------- mount watcher / UI refresh
+    async def component_init(self) -> None:
+        self._watch_task = asyncio.create_task(self._watch_mount())
+
+    async def close(self) -> None:
+        if self._watch_task is not None:
+            self._watch_task.cancel()
+
+    @staticmethod
+    def _mount_state(path: pathlib.Path) -> Tuple[bool, int]:
+        try:
+            return os.path.ismount(path), os.stat(path).st_dev
+        except OSError:
+            return False, 0
+
+    async def _watch_mount(self) -> None:
+        # Mounting a disk produces no inotify events, so Mainsail/KlipperScreen
+        # would keep showing a stale USB folder. Poll the mount state (one
+        # stat per second) and tell the clients to refresh when it changes.
+        last: Optional[Tuple[bool, int]] = None
+        while True:
+            try:
+                usb_root = self._gcode_root() / self.usb_dir
+                state = self._mount_state(usb_root)
+                if last is not None and state != last:
+                    self._notify_root_changed()
+                last = state
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logging.exception("usb_import: mount watcher error")
+            await asyncio.sleep(1.0)
+
+    def _notify_root_changed(self) -> None:
+        fm = self.server.lookup_component("file_manager")
+        root = str(fm.get_directory("gcodes"))
+        try:
+            fm._sched_changed_event("root_update", "gcodes", root, immediate=True)
+        except Exception:
+            logging.exception("usb_import: could not send file list refresh")
 
     # ------------------------------------------------------------ helpers
     def _gcode_root(self) -> pathlib.Path:
@@ -111,7 +153,7 @@ class UsbImport:
 
         loop = asyncio.get_running_loop()
         dest, reused = await loop.run_in_executor(
-            None, self._copy_blocking, src, dest_dir
+            None, self._copy_blocking, src, dest_dir, self._tmp_dir(root, dest_dir)
         )
 
         note = "already imported, not duplicated" if reused else "copy complete"
@@ -121,11 +163,28 @@ class UsbImport:
         kapis = self.server.lookup_component("klippy_apis")
         await kapis.start_print(f"{self.import_dir}/{dest.name}")
 
+    def _tmp_dir(self, root: pathlib.Path, dest_dir: pathlib.Path) -> pathlib.Path:
+        # The temporary file lives OUTSIDE the directories Moonraker watches.
+        # Renaming it into place then looks like a brand-new file to Moonraker
+        # (-> normal "file created" update in the web UI). A rename inside the
+        # watched tree is reported as "move_file" from a path the UI never knew.
+        tmp_dir = root.parent / ".usb_import_tmp"
+        try:
+            tmp_dir.mkdir(exist_ok=True)
+            if os.stat(tmp_dir).st_dev == os.stat(dest_dir).st_dev:
+                return tmp_dir  # same filesystem: rename stays atomic
+        except OSError:
+            pass
+        return dest_dir
+
     # ------------------------------------------------- copy (worker thread)
     def _copy_blocking(
-        self, src: pathlib.Path, dest_dir: pathlib.Path
+        self, src: pathlib.Path, dest_dir: pathlib.Path, tmp_dir: pathlib.Path
     ) -> Tuple[pathlib.Path, bool]:
         try:
+            # Only one copy runs at a time: anything left here is stale
+            for stale in tmp_dir.glob(".*.part"):
+                stale.unlink(missing_ok=True)
             size = src.stat().st_size
             src_hash: Optional[str] = None
 
@@ -150,7 +209,7 @@ class UsbImport:
                     f"not enough free space ({_fmt_size(free)} free)"
                 )
 
-            tmp = dest_dir / f".{final.name}.part"
+            tmp = tmp_dir / f".{final.name}.part"
             copied = 0
             try:
                 with open(src, "rb") as fin, open(tmp, "wb") as fout:

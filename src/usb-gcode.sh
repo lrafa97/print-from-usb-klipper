@@ -41,10 +41,10 @@ case "$action" in
     esac
 
     mkdir -p "$MOUNTPOINT"
-    if mount "${args[@]}" "$dev" "$MOUNTPOINT"; then
+    if err="$(mount "${args[@]}" "$dev" "$MOUNTPOINT" 2>&1)"; then
       log "$dev ($fstype) mounted at $MOUNTPOINT"
     else
-      log "failed to mount $dev ($fstype)"; exit 1
+      log "failed to mount $dev ($fstype): $err"; exit 1
     fi
     ;;
 
