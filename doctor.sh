@@ -51,7 +51,7 @@ grep -q 'include usb_import.cfg' "$PRINTER_DATA/config/printer.cfg" 2>/dev/null 
   && ok "printer.cfg include" || bad "printer.cfg include missing"
 
 repo_ver="$(cat "$SRC/VERSION" 2>/dev/null || echo unknown)"
-loaded_ver="$(grep -o 'usb_import: version [^ ]*' "$PRINTER_DATA/logs/moonraker.log" 2>/dev/null | tail -n1 | awk '{print $3}')"
+loaded_ver="$(grep -a -o 'usb_import: version [^ ]*' "$PRINTER_DATA/logs/moonraker.log" 2>/dev/null | tail -n1 | awk '{print $3}')"
 if [[ -z "$loaded_ver" ]]; then
   warn "repo version $repo_ver; Moonraker has not logged a loaded version yet"
 elif [[ "$loaded_ver" == "$repo_ver" ]]; then
@@ -64,7 +64,7 @@ head_ "Services"
 MLOG="$PRINTER_DATA/logs/moonraker.log"
 if systemctl is-active --quiet moonraker; then
   ok "moonraker running"
-  if grep -q "Component (usb_import) loaded" "$MLOG" 2>/dev/null; then
+  if grep -aq "Component (usb_import) loaded" "$MLOG" 2>/dev/null; then
     ok "usb_import component loaded"
   else
     bad "usb_import component not loaded: see $MLOG"
