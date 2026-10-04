@@ -27,8 +27,13 @@ too (see [Status](#status)).
 ## Install
 
 ```
-sudo apt-get update && sudo apt-get install -y git && cd ~ && git clone https://github.com/lrafa97/print-from-usb-klipper.git && ./print-from-usb-klipper/install.sh
+(command -v git >/dev/null || (sudo apt-get update && sudo apt-get install -y git)) && cd ~ && git clone https://github.com/lrafa97/print-from-usb-klipper.git && ./print-from-usb-klipper/install.sh
 ```
+
+Git is only installed if it is missing, so a broken or outdated apt repository
+(common on end-of-life Raspberry Pi OS releases) does not stop the install.
+If the `print-from-usb-klipper` folder already exists, use the update commands
+below instead.
 
 For a different layout:
 `PRINTER_DATA=/path MOONRAKER_DIR=/path ./print-from-usb-klipper/install.sh`
