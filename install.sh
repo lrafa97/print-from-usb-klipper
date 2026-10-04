@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Installer for print-from-usb-klipper. Idempotent: safe to run several times.
 #   ./install.sh [--no-restart]
-# Optional environment variables: PRINTER_DATA, MOONRAKER_DIR, TARGET_USER
+# Optional environment variables: PRINTER_DATA, MOONRAKER_DIR, TARGET_USER,
+# SCREEN_SERVICE (touchscreen service to keep connected, default KlipperScreen;
+# set it empty to disable that watchdog)
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,6 +49,7 @@ backup() {
   chown "$TARGET_USER:$grp" "$BACKUP_DIR/$base.bak"
 }
 
+SCREEN_SERVICE="${SCREEN_SERVICE-KlipperScreen}"
 RESTART=1; [[ "${1:-}" == "--no-restart" ]] && RESTART=0
 FIRST=1;   [[ -f /etc/usb-gcode.conf ]] && FIRST=0
 
@@ -131,17 +134,27 @@ sed -i '/# >>> usb-gcode >>>/,/# <<< usb-gcode <<</d' "$CONF"
 sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$CONF"
 {
   printf '\n%s\n' "$BEGIN"
-  printf '[usb_import]\nusb_dir: USB\nimport_dir: Imported\n'
+  printf '[usb_import]\nusb_dir: USB\nimport_dir: Imported\nscreen_service: %s\nscreen_check_delay: 40\n' \
+    "$SCREEN_SERVICE"
   # Updates from Mainsail, if this came from a git clone with an origin
   if ORIGIN="$(sudo -u "$TARGET_USER" git -C "$SRC" remote get-url origin 2>/dev/null)"; then
-    BRANCH="$(sudo -u "$TARGET_USER" git -C "$SRC" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
-    printf '\n[update_manager print-from-usb-klipper]\ntype: git_repo\npath: %s\norigin: %s\nprimary_branch: %s\nmanaged_services: klipper moonraker\n' \
+    # symbolic-ref prints nothing when detached/unavailable (rev-parse prints "HEAD")
+    BRANCH="$(sudo -u "$TARGET_USER" git -C "$SRC" symbolic-ref --short -q HEAD 2>/dev/null || true)"
+    [[ -n "$BRANCH" ]] || BRANCH=main
+    # The update manager component only loads when the base section exists
+    if ! grep -rqE '^\[update_manager\][[:space:]]*$' "$PRINTER_DATA/config" \
+         --include='*.conf' --include='*.cfg' 2>/dev/null; then
+      printf '\n[update_manager]\n'
+    fi
+    printf '\n[update_manager print-from-usb-klipper]\ntype: git_repo\npath: %s\norigin: %s\nprimary_branch: %s\nmanaged_services: moonraker\n' \
       "$SRC" "$ORIGIN" "$BRANCH"
   fi
   printf '%s\n' "$END"
 } >> "$CONF"
 
 echo "==> Klipper macro"
+MACRO_CHANGED=0
+cmp -s "$SRC/src/usb_import.cfg" "$PRINTER_DATA/config/usb_import.cfg" 2>/dev/null || MACRO_CHANGED=1
 install -m 644 -o "$TARGET_USER" -g "$(id -gn "$TARGET_USER")" \
   "$SRC/src/usb_import.cfg" "$PRINTER_DATA/config/usb_import.cfg"
 PCFG="$PRINTER_DATA/config/printer.cfg"
@@ -157,12 +170,16 @@ udevadm control --reload
 
 if [[ $RESTART -eq 1 ]] && is_printing; then
   RESTART=0
-  echo "A print is in progress: Klipper was NOT restarted. Restart it when the"
-  echo "printer is idle to activate the macro."
+  echo "A print is in progress: nothing was restarted. Restart Moonraker (and Klipper,"
+  echo "if it is the first install or the macro changed) when the printer is idle."
 fi
 
-if [[ $FIRST -eq 1 && $RESTART -eq 1 ]]; then
-  systemctl restart moonraker klipper
+if [[ $RESTART -eq 1 ]]; then
+  if [[ $FIRST -eq 1 ]]; then
+    systemctl restart moonraker klipper   # first install: the macro needs Klipper
+  else
+    systemctl restart moonraker           # updates: the component only needs Moonraker
+  fi
   echo "==> Waiting for Klipper to report ready (up to 60 s)"
   state=unknown
   if command -v curl >/dev/null; then
@@ -184,7 +201,10 @@ if [[ $FIRST -eq 1 && $RESTART -eq 1 ]]; then
     *)
       echo "Installed. Could not verify Klipper's state; check Mainsail." ;;
   esac
+  if [[ $FIRST -eq 0 && $MACRO_CHANGED -eq 1 ]]; then
+    echo "The Klipper macro changed: restart Klipper when the printer is idle."
+  fi
 else
-  echo "Installed/updated. Unless this ran from the Mainsail update manager,"
-  echo "restart Moonraker and Klipper to apply the changes."
+  echo "Installed/updated without restarting. Restart Moonraker to apply the changes"
+  echo "(and Klipper if it is the first install or the macro changed)."
 fi

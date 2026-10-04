@@ -82,6 +82,22 @@ if command -v curl >/dev/null; then
   esac
 fi
 
+head_ "Touchscreen watchdog"
+wd="$(grep -a 'usb_import: .*\(watchdog\|connected to Moonraker\|not connected\|nothing to do\|restarting it\|time window\)' "$MLOG" 2>/dev/null | tail -n1)"
+msg="$(printf '%s' "$wd" | sed 's/.*usb_import: //')"
+case "$wd" in
+  "")                        warn "no watchdog activity logged yet (Moonraker just started?)" ;;
+  *"restarting it"*)         warn "$msg (the screen had lost its connection)" ;;
+  *"not connected"*)         warn "$msg" ;;
+  *"is connected to Moonraker"*) ok "$msg" ;;
+  *"nothing to do"*)         ok "$msg" ;;
+  *)                         warn "$msg" ;;   # armed / off / disabled / time window
+esac
+if command -v curl >/dev/null; then
+  mwarn="$(curl -s --max-time 3 http://127.0.0.1:7125/server/info | grep -o 'usb-gcode: [^"]*')"
+  [[ -n "$mwarn" ]] && while IFS= read -r line; do warn "Moonraker warning: $line"; done <<< "$mwarn"
+fi
+
 head_ "Possible conflicts"
 for pkg in usbmount autofs; do
   dpkg -s "$pkg" >/dev/null 2>&1 && bad "package '$pkg' installed (conflicts, the installer removes usbmount)"

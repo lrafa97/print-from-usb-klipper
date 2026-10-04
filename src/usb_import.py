@@ -9,6 +9,9 @@
 #   [usb_import]
 #   usb_dir: USB            # folder (inside gcodes) where the stick is mounted
 #   import_dir: Imported    # destination folder for the copies (they accumulate)
+#   screen_service: KlipperScreen   # touchscreen service to keep connected
+#                                   # (empty value disables the watchdog)
+#   screen_check_delay: 40  # seconds after Moonraker starts before checking it
 from __future__ import annotations
 
 import asyncio
@@ -25,6 +28,10 @@ if TYPE_CHECKING:
 CHUNK = 1024 * 1024
 ALLOWED_EXT = {".gcode", ".gco", ".g"}
 MIN_FREE_MARGIN = 64 * 1024 * 1024  # free space to keep after the copy
+INSTALLED_MOUNT_SCRIPT = pathlib.Path("/usr/local/lib/usb-gcode/usb-gcode.sh")
+SCREEN_RECHECK = 45.0       # seconds to wait after restarting the screen service
+SCREEN_MAX_RESTARTS = 2     # restarts attempted per Moonraker start
+SCREEN_WINDOW = 300.0       # give up watching this long after the first check
 
 
 class UsbImportError(Exception):
@@ -55,9 +62,12 @@ class UsbImport:
         self.server = config.get_server()
         self.usb_dir = config.get("usb_dir", "USB").strip("/")
         self.import_dir = config.get("import_dir", "Imported").strip("/")
+        self.screen_service = config.get("screen_service", "KlipperScreen").strip()
+        self.screen_delay = config.getfloat("screen_check_delay", 40.0, above=4.0)
         self.lock = asyncio.Lock()
         self._log_version()
         self._watch_task: Optional[asyncio.Task] = None
+        self._screen_task: Optional[asyncio.Task] = None
         self.server.register_remote_method(
             "usb_import_print", self._on_print_request
         )
@@ -73,11 +83,122 @@ class UsbImport:
 
     # ------------------------------------------- mount watcher / UI refresh
     async def component_init(self) -> None:
+        self._check_installed_files()
         self._watch_task = asyncio.create_task(self._watch_mount())
+        self._screen_task = asyncio.create_task(self._screen_watchdog())
 
     async def close(self) -> None:
-        if self._watch_task is not None:
-            self._watch_task.cancel()
+        for task in (self._watch_task, self._screen_task):
+            if task is not None:
+                task.cancel()
+
+    # ------------------------------------------------ installed files check
+    def _check_installed_files(self) -> None:
+        # The mount script and the Klipper macro are copies made by install.sh.
+        # An update can change the repository copy; tell the user when the
+        # installed copies are behind instead of silently running old ones.
+        try:
+            repo = pathlib.Path(__file__).resolve().parent.parent
+            fm = self.server.lookup_component("file_manager")
+            cfg_dir = pathlib.Path(str(fm.get_directory("config")))
+            pairs = [
+                (repo / "src" / "usb-gcode.sh", INSTALLED_MOUNT_SCRIPT),
+                (repo / "src" / "usb_import.cfg", cfg_dir / "usb_import.cfg"),
+            ]
+            stale = []
+            for src, dst in pairs:
+                if not src.is_file():
+                    continue
+                if not dst.is_file() or _sha256(src) != _sha256(dst):
+                    stale.append(dst.name)
+            if stale:
+                self.server.add_warning(
+                    f"usb-gcode: {', '.join(stale)} differ from the repository. "
+                    f"Run: cd {repo} && ./install.sh",
+                    warn_id="usb_import_drift",
+                )
+        except Exception:
+            logging.exception("usb_import: installed files check failed")
+
+    # ------------------------------------------------- touchscreen watchdog
+    # KlipperScreen retries a lost connection only a few times and then stays
+    # stuck until its service is restarted. After Moonraker (re)starts, make
+    # sure the screen is really connected; if it is running but not connected,
+    # restart just that service.
+    async def _screen_watchdog(self) -> None:
+        name = self.screen_service
+        if not name:
+            logging.info("usb_import: screen watchdog disabled")
+            return
+        logging.info(
+            f"usb_import: screen watchdog armed for {name} "
+            f"(first check in {self.screen_delay:.0f} s)"
+        )
+        try:
+            await asyncio.sleep(self.screen_delay)
+            await self._screen_check(name)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.exception("usb_import: screen watchdog error")
+
+    def _screen_state(self, machine, name: str) -> str:
+        info = machine.get_system_info()
+        return info.get("service_state", {}).get(name, {}).get(
+            "active_state", "unknown"
+        )
+
+    async def _screen_check(self, name: str) -> None:
+        try:
+            machine = self.server.lookup_component("machine")
+            clients = self.server.lookup_component("websockets")
+        except self.server.error:
+            logging.info("usb_import: screen watchdog off (components missing)")
+            return
+        if name not in machine.get_system_info().get("available_services", []):
+            logging.info(
+                f"usb_import: screen watchdog off ({name} is not an installed "
+                "service allowed in moonraker.asvc)"
+            )
+            return
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + SCREEN_WINDOW
+        restarts = 0
+        while loop.time() < deadline:
+            state = self._screen_state(machine, name)
+            if state == "activating":
+                await asyncio.sleep(10.0)
+                continue
+            if state != "active":
+                logging.info(f"usb_import: {name} is '{state}', nothing to do")
+                return
+            if clients.get_clients_by_name(name):
+                logging.info(f"usb_import: {name} is connected to Moonraker")
+                return
+            if restarts >= SCREEN_MAX_RESTARTS:
+                self.server.add_warning(
+                    f"usb-gcode: {name} is running but could not connect to "
+                    f"Moonraker after {restarts} restarts. "
+                    f"Try: sudo systemctl restart {name}",
+                    warn_id="usb_import_screen",
+                )
+                return
+            restarts += 1
+            logging.warning(
+                f"usb_import: {name} is running but not connected to "
+                f"Moonraker, restarting it ({restarts}/{SCREEN_MAX_RESTARTS})"
+            )
+            try:
+                await machine.do_service_action("restart", name)
+            except Exception as e:
+                self.server.add_warning(
+                    f"usb-gcode: could not restart {name}: {e}",
+                    warn_id="usb_import_screen",
+                )
+                return
+            await asyncio.sleep(SCREEN_RECHECK)
+        logging.warning(f"usb_import: stopped watching {name} (time window over)")
 
     @staticmethod
     def _mount_state(path: pathlib.Path) -> Tuple[bool, int]:

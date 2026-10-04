@@ -47,19 +47,25 @@ Klipper when the printer is idle.
 
 From Mainsail: Machine > Update Manager > refresh, then update
 *print-from-usb-klipper*. The Moonraker component is linked to the cloned
-repository, so the update replaces its code, and the managed restart of Klipper
-and Moonraker loads it.
+repository, so the update replaces its code and Moonraker is restarted to load
+it. Only Moonraker is restarted, not Klipper.
 
-The system-side files (mount script, udev rule, Klipper macro) are copies that
-change rarely. After an update, run `./doctor.sh`: if it reports that one of
-them differs from the repository, run `./install.sh` (and restart Klipper if it
-says so).
+The mount script and the Klipper macro are copies made by the installer, and they
+change rarely. When an update changes one of them, Moonraker shows a warning in
+Mainsail ("usb-gcode: ... differ from the repository") with the command to run:
+
+```
+cd ~/print-from-usb-klipper && ./install.sh
+```
+
+The installer is safe to run at any time: it restarts Moonraker (not during a
+print) and tells you if the Klipper macro changed and Klipper should be restarted
+once the printer is idle. `./doctor.sh` shows the same information.
 
 Manual update:
 
 ```
 cd ~/print-from-usb-klipper && git pull && ./install.sh
-sudo systemctl restart moonraker
 ```
 
 ## Uninstall
@@ -141,10 +147,52 @@ findmnt ~/printer_data/gcodes/USB              # is the stick mounted?
 tail -n 50 ~/printer_data/logs/moonraker.log   # copy and print start
 ```
 
+### KlipperScreen stays on "Connecting" after Moonraker restarts
+
+KlipperScreen retries a lost connection only about 4 times, 4 seconds apart, and
+then stays stuck until its service is restarted. Any Moonraker restart that takes
+longer than that (slow Pi, many Update Manager entries) can leave the screen
+stuck. This tool includes a watchdog for that, see below. If it is disabled or
+cannot help, restart just the screen, no reboot needed:
+`sudo systemctl restart KlipperScreen`.
+
+## Touchscreen watchdog
+
+After every Moonraker start, the component waits 40 seconds and checks whether
+KlipperScreen is connected. If its service is running but not connected, it
+restarts that service (at most twice, 45 seconds apart). It never starts a
+service that is stopped, so a screen you stopped on purpose stays stopped. If the
+screen still cannot connect, or the restart is not permitted, Mainsail shows a
+warning.
+
+It only acts when the service is installed and listed in `moonraker.asvc`
+(KlipperScreen is by default). Settings in the `[usb_import]` section of
+`moonraker.conf`:
+
+```
+screen_service: KlipperScreen   # empty value disables the watchdog
+screen_check_delay: 40          # seconds after Moonraker starts
+```
+
+The installer rewrites that block on every run. To install with the watchdog
+disabled use `SCREEN_SERVICE= ./install.sh`. `./doctor.sh` shows what the
+watchdog did last.
+
+## Development
+
+The component can be tested without Moonraker, Klipper or a printer, using a
+simulated Moonraker (copy logic, path checks, the watchdog, the update warning):
+
+```
+python3 -m unittest discover -s tests -v
+```
+
 ## Limitations
 
 - One stick at a time (a single mount point); with several partitions only the
   first one is mounted.
+- One Klipper instance per machine. Multi-instance setups share the single mount
+  point and are not supported.
 - Pulling the stick during the few seconds of the copy cancels the print start
   with an error message. After the print has started it is safe.
 - KlipperScreen only updates a folder it is showing from per-file changes. If a
