@@ -73,7 +73,7 @@ so both go back to their previous configuration. It refuses to run while a
 print is in progress (`--force` overrides that).
 
 Kept on purpose: the files in `gcodes/Imported` (they belong to the user), the
-`*.bak-usbgcode` backups and the cloned folder. A removed `usbmount` package is
+backups in `config/print-from-usb-klipper-backup/` and the cloned folder. A removed `usbmount` package is
 not reinstalled.
 
 Run the uninstaller **before** deleting the cloned folder: the Moonraker
@@ -123,7 +123,9 @@ The installer checks your system before changing anything:
 - **Files already in `gcodes/USB`:** kept, but hidden while a stick is mounted.
 - After the first install the script waits for Klipper to report *ready*. If it
   does not, it tells you and you can run `./uninstall.sh`; backups of the edited
-  files are saved as `*.bak-usbgcode`.
+  files are saved in `config/print-from-usb-klipper-backup/`
+  (`printer.cfg.bak`, `moonraker.conf.bak`). Backups made by older versions are
+  moved there the next time `./install.sh` runs.
 
 Run `./doctor.sh` at any time for a read-only health report (install state,
 services, conflicts, sticks, recent mount log). Paste its output when asking

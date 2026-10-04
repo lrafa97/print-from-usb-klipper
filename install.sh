@@ -31,6 +31,21 @@ MOUNTPOINT="$PRINTER_DATA/gcodes/USB"
 LIB=/usr/local/lib/usb-gcode
 BEGIN="# >>> usb-gcode >>>"
 END="# <<< usb-gcode <<<"
+BACKUP_DIR="$PRINTER_DATA/config/print-from-usb-klipper-backup"
+
+# backup <file>: keep the FIRST (original) copy in the backup folder, named
+# <file>.bak. Also migrates backups made by older versions next to the original.
+backup() {
+  local f="$1" base grp
+  base="$(basename "$f")"; grp="$(id -gn "$TARGET_USER")"
+  install -d -o "$TARGET_USER" -g "$grp" "$BACKUP_DIR"
+  if [[ -f "$f.bak-usbgcode" ]]; then
+    [[ -e "$BACKUP_DIR/$base.bak" ]] || mv "$f.bak-usbgcode" "$BACKUP_DIR/$base.bak"
+    rm -f "$f.bak-usbgcode"
+  fi
+  [[ -e "$BACKUP_DIR/$base.bak" ]] || cp "$f" "$BACKUP_DIR/$base.bak"
+  chown "$TARGET_USER:$grp" "$BACKUP_DIR/$base.bak"
+}
 
 RESTART=1; [[ "${1:-}" == "--no-restart" ]] && RESTART=0
 FIRST=1;   [[ -f /etc/usb-gcode.conf ]] && FIRST=0
@@ -110,7 +125,7 @@ echo "==> Moonraker component"
 # update from Mainsail replaces the code, and the managed restart loads it.
 ln -sfn "$SRC/src/usb_import.py" "$MOONRAKER_DIR/moonraker/components/usb_import.py"
 CONF="$PRINTER_DATA/config/moonraker.conf"
-cp -n "$CONF" "$CONF.bak-usbgcode"
+backup "$CONF"
 # Drop any previous block (and trailing blank lines), then write a fresh one
 sed -i '/# >>> usb-gcode >>>/,/# <<< usb-gcode <<</d' "$CONF"
 sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$CONF"
@@ -130,8 +145,8 @@ echo "==> Klipper macro"
 install -m 644 -o "$TARGET_USER" -g "$(id -gn "$TARGET_USER")" \
   "$SRC/src/usb_import.cfg" "$PRINTER_DATA/config/usb_import.cfg"
 PCFG="$PRINTER_DATA/config/printer.cfg"
+backup "$PCFG"
 if ! grep -q 'include usb_import.cfg' "$PCFG"; then
-  cp -n "$PCFG" "$PCFG.bak-usbgcode"
   # At the top: the end of the file belongs to Klipper's SAVE_CONFIG block
   sed -i '1i [include usb_import.cfg]' "$PCFG"
 fi
@@ -165,7 +180,7 @@ if [[ $FIRST -eq 1 && $RESTART -eq 1 ]]; then
     error|shutdown)
       echo "WARNING: Klipper reports '$state' after the install." >&2
       echo "$info" | sed -n 's/.*"state_message": *"\([^"]*\)".*/  \1/p' >&2
-      echo "If this is caused by this tool, run ./uninstall.sh (backups: *.bak-usbgcode)." >&2 ;;
+      echo "If this is caused by this tool, run ./uninstall.sh (backups: config/print-from-usb-klipper-backup)." >&2 ;;
     *)
       echo "Installed. Could not verify Klipper's state; check Mainsail." ;;
   esac
