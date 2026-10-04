@@ -9,6 +9,15 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Elevates itself (the clone keeps the right owner, the install runs as root)
 if [[ $EUID -ne 0 ]]; then exec sudo -E "$0" "$@"; fi
 
+# True while a print is running/paused (restarting Klipper would abort it)
+is_printing() {
+  command -v curl >/dev/null || return 1
+  local st
+  st="$(curl -s --max-time 3 'http://127.0.0.1:7125/printer/objects/query?print_stats=state' \
+        | sed -n 's/.*"state": *"\([a-z]*\)".*/\1/p')"
+  [[ "$st" == printing || "$st" == paused ]]
+}
+
 TARGET_USER="${TARGET_USER:-${SUDO_USER:-}}"
 [[ -n "$TARGET_USER" && "$TARGET_USER" != root ]] || {
   echo "Could not determine the Klipper user. Use TARGET_USER=<name>." >&2; exit 1; }
@@ -35,11 +44,24 @@ for p in "$PRINTER_DATA/config/printer.cfg" "$PRINTER_DATA/config/moonraker.conf
                      echo "(override with PRINTER_DATA=... or MOONRAKER_DIR=...)" >&2; exit 1; }
 done
 
+# Another config that already defines SDCARD_PRINT_FILE would make Klipper
+# refuse to start (duplicate macro / rename_existing). Stop before touching anything.
+CONFLICTS="$(grep -rIliE '^\[gcode_macro[[:space:]]+SDCARD_PRINT_FILE\]' "$PRINTER_DATA/config" \
+             --include='*.cfg' 2>/dev/null | grep -v '/usb_import\.cfg$' || true)"
+if [[ -n "$CONFLICTS" ]]; then
+  echo "ERROR: SDCARD_PRINT_FILE is already defined in your Klipper config:" >&2
+  echo "$CONFLICTS" | sed 's/^/  - /' >&2
+  echo "This tool needs to override that command. Merge or remove the existing" >&2
+  echo "macro first, then run the installer again. Nothing was changed." >&2
+  exit 1
+fi
+
 # 'usbmount' (found on some printer images) mounts sticks inside udev's private
 # mount namespace, which makes our own mount fail with "mount point busy".
 if dpkg -s usbmount >/dev/null 2>&1; then
   echo "==> Removing 'usbmount' (conflicts with this tool)"
   apt-get purge -y usbmount
+  umount /media/usb* 2>/dev/null || true
   echo "    Reboot once after the install so no stale mount is left behind."
 fi
 
@@ -78,6 +100,11 @@ EOF
 echo "==> Folders"
 sudo -u "$TARGET_USER" mkdir -p "$MOUNTPOINT" "$PRINTER_DATA/gcodes/Imported"
 
+if ! mountpoint -q "$MOUNTPOINT" && [[ -n "$(ls -A "$MOUNTPOINT" 2>/dev/null)" ]]; then
+  echo "WARNING: $MOUNTPOINT already contains files. They stay on disk but are"
+  echo "         hidden while a USB stick is mounted there."
+fi
+
 echo "==> Moonraker component"
 ln -sfn "$LIB/usb_import.py" "$MOONRAKER_DIR/moonraker/components/usb_import.py"
 CONF="$PRINTER_DATA/config/moonraker.conf"
@@ -110,9 +137,35 @@ echo "==> Activating"
 systemctl daemon-reload
 udevadm control --reload
 
+if [[ $RESTART -eq 1 ]] && is_printing; then
+  RESTART=0
+  echo "A print is in progress: Klipper was NOT restarted. Restart it when the"
+  echo "printer is idle to activate the macro."
+fi
+
 if [[ $FIRST -eq 1 && $RESTART -eq 1 ]]; then
   systemctl restart moonraker klipper
-  echo "Installed. Klipper and Moonraker were restarted."
+  echo "==> Waiting for Klipper to report ready (up to 60 s)"
+  state=unknown
+  if command -v curl >/dev/null; then
+    for _ in $(seq 1 30); do
+      sleep 2
+      info="$(curl -s --max-time 2 http://127.0.0.1:7125/printer/info || true)"
+      state="$(printf '%s' "$info" | sed -n 's/.*"state": *"\([a-z]*\)".*/\1/p')"
+      [[ "$state" == ready || "$state" == error || "$state" == shutdown ]] && break
+      state=unknown
+    done
+  fi
+  case "$state" in
+    ready)
+      echo "Installed. Klipper is ready." ;;
+    error|shutdown)
+      echo "WARNING: Klipper reports '$state' after the install." >&2
+      echo "$info" | sed -n 's/.*"state_message": *"\([^"]*\)".*/  \1/p' >&2
+      echo "If this is caused by this tool, run ./uninstall.sh (backups: *.bak-usbgcode)." >&2 ;;
+    *)
+      echo "Installed. Could not verify Klipper's state; check Mainsail." ;;
+  esac
 else
   echo "Installed/updated. Unless this ran from the Mainsail update manager,"
   echo "restart Moonraker and Klipper to apply the changes."

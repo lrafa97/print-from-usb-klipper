@@ -75,6 +75,27 @@ Files already imported into `gcodes/Imported` are kept.
 | `config/usb_import.cfg` | macro that intercepts `SDCARD_PRINT_FILE` for `USB/...` |
 | `moonraker.conf`, `printer.cfg` | a block marked `usb-gcode` and one `[include]` line |
 
+## Existing setups and conflicts
+
+The installer checks your system before changing anything:
+
+- **Another `SDCARD_PRINT_FILE` macro** in your Klipper config: the installer
+  stops and changes nothing (two definitions would stop Klipper from starting).
+  Merge or remove the old one, then run it again.
+- **`usbmount` installed:** removed automatically (it mounts sticks inside udev's
+  private namespace, which blocks this tool). Reboot once afterwards.
+- **Other automounters** (udisks2 desktop automount, autofs, `/etc/fstab`
+  entries for USB): not removed, because they are often needed for other
+  reasons. `./doctor.sh` points them out if they mount the same stick.
+- **Files already in `gcodes/USB`:** kept, but hidden while a stick is mounted.
+- After the first install the script waits for Klipper to report *ready*. If it
+  does not, it tells you and you can run `./uninstall.sh`; backups of the edited
+  files are saved as `*.bak-usbgcode`.
+
+Run `./doctor.sh` at any time for a read-only health report (install state,
+services, conflicts, sticks, recent mount log). Paste its output when asking
+for help.
+
 ## Troubleshooting
 
 ```

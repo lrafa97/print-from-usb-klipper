@@ -188,7 +188,10 @@ class UsbImport:
         try:
             # Only one copy runs at a time: anything left here is stale
             for stale in tmp_dir.glob(".*.part"):
-                stale.unlink(missing_ok=True)
+                try:
+                    stale.unlink()
+                except FileNotFoundError:
+                    pass
             size = src.stat().st_size
             src_hash: Optional[str] = None
 

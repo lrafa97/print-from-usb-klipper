@@ -22,8 +22,8 @@ case "$action" in
     [[ -b "$dev" ]] || { log "$dev no longer exists"; exit 0; }
 
     # Never touch devices that are already mounted (e.g. booting from a USB SSD)
-    if findmnt -rn -S "$dev" >/dev/null; then
-      log "$dev is already mounted, ignoring"; exit 0
+    if where="$(findmnt -rn -S "$dev" -o TARGET | head -n1)" && [[ -n "$where" ]]; then
+      log "$dev is already mounted at $where by something else, ignoring"; exit 0
     fi
     if mountpoint -q "$MOUNTPOINT"; then
       log "$MOUNTPOINT is busy, ignoring $dev"; exit 0
@@ -44,7 +44,9 @@ case "$action" in
     if err="$(mount "${args[@]}" "$dev" "$MOUNTPOINT" 2>&1)"; then
       log "$dev ($fstype) mounted at $MOUNTPOINT"
     else
-      log "failed to mount $dev ($fstype): $err"; exit 1
+      hint=""
+      [[ "$err" == *busy* ]] && hint=" -- another automounter (usbmount, udisks...) may hold the stick; run doctor.sh"
+      log "failed to mount $dev ($fstype): $err$hint"; exit 1
     fi
     ;;
 
