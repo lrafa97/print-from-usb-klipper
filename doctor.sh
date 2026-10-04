@@ -9,6 +9,7 @@ warn() { printf '  [WARN]  %s\n' "$*"; }
 bad()  { printf '  [FAIL]  %s\n' "$*"; }
 head_() { printf '\n== %s ==\n' "$*"; }
 
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONF=/etc/usb-gcode.conf
 HOME_DIR="${HOME}"
 PRINTER_DATA="${PRINTER_DATA:-$HOME_DIR/printer_data}"
@@ -24,13 +25,40 @@ else
 fi
 [[ -f /etc/udev/rules.d/99-usb-gcode.rules ]]   && ok "udev rule"        || bad "udev rule missing"
 [[ -f /etc/systemd/system/usb-gcode@.service ]] && ok "systemd service"  || bad "systemd service missing"
-[[ -x /usr/local/lib/usb-gcode/usb-gcode.sh ]]  && ok "mount script"     || bad "mount script missing"
-[[ -L "$MOONRAKER_DIR/moonraker/components/usb_import.py" ]] \
-  && ok "Moonraker component linked" || bad "Moonraker component not linked ($MOONRAKER_DIR)"
+if [[ -x /usr/local/lib/usb-gcode/usb-gcode.sh ]]; then
+  cmp -s "$SRC/src/usb-gcode.sh" /usr/local/lib/usb-gcode/usb-gcode.sh \
+    && ok "mount script (up to date)" \
+    || warn "mount script differs from the repo: run ./install.sh"
+else
+  bad "mount script missing"
+fi
+target="$(readlink -f "$MOONRAKER_DIR/moonraker/components/usb_import.py" 2>/dev/null || true)"
+if [[ "$target" == "$SRC/src/usb_import.py" ]]; then
+  ok "Moonraker component linked to this repo"
+else
+  bad "Moonraker component not linked to $SRC (run ./install.sh)"
+fi
+if [[ -f "$PRINTER_DATA/config/usb_import.cfg" ]]; then
+  cmp -s "$SRC/src/usb_import.cfg" "$PRINTER_DATA/config/usb_import.cfg" \
+    && ok "Klipper macro (up to date)" \
+    || warn "Klipper macro differs from the repo: run ./install.sh, then restart Klipper"
+else
+  bad "Klipper macro file missing"
+fi
 grep -q 'usb-gcode >>>' "$PRINTER_DATA/config/moonraker.conf" 2>/dev/null \
   && ok "moonraker.conf block" || bad "moonraker.conf block missing"
 grep -q 'include usb_import.cfg' "$PRINTER_DATA/config/printer.cfg" 2>/dev/null \
   && ok "printer.cfg include" || bad "printer.cfg include missing"
+
+repo_ver="$(cat "$SRC/VERSION" 2>/dev/null || echo unknown)"
+loaded_ver="$(grep -o 'usb_import: version [^ ]*' "$PRINTER_DATA/logs/moonraker.log" 2>/dev/null | tail -n1 | awk '{print $3}')"
+if [[ -z "$loaded_ver" ]]; then
+  warn "repo version $repo_ver; Moonraker has not logged a loaded version yet"
+elif [[ "$loaded_ver" == "$repo_ver" ]]; then
+  ok "version $repo_ver (repo = loaded by Moonraker)"
+else
+  bad "repo is $repo_ver but Moonraker loaded $loaded_ver: restart Moonraker"
+fi
 
 head_ "Services"
 MLOG="$PRINTER_DATA/logs/moonraker.log"

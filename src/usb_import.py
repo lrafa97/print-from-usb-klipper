@@ -56,10 +56,20 @@ class UsbImport:
         self.usb_dir = config.get("usb_dir", "USB").strip("/")
         self.import_dir = config.get("import_dir", "Imported").strip("/")
         self.lock = asyncio.Lock()
+        self._log_version()
         self._watch_task: Optional[asyncio.Task] = None
         self.server.register_remote_method(
             "usb_import_print", self._on_print_request
         )
+
+    def _log_version(self) -> None:
+        # Lets "doctor.sh" prove which code Moonraker is really running
+        here = pathlib.Path(__file__).resolve()
+        try:
+            version = (here.parent.parent / "VERSION").read_text().strip()
+        except OSError:
+            version = "unknown"
+        logging.info(f"usb_import: version {version} loaded from {here}")
 
     # ------------------------------------------- mount watcher / UI refresh
     async def component_init(self) -> None:

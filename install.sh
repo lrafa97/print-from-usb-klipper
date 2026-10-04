@@ -69,7 +69,7 @@ echo "==> System files"
 # Copied to a root-owned location: root never executes anything the user can edit
 install -d "$LIB"
 install -m 755 "$SRC/src/usb-gcode.sh"  "$LIB/usb-gcode.sh"
-install -m 644 "$SRC/src/usb_import.py" "$LIB/usb_import.py"
+rm -f "$LIB/usb_import.py"   # older versions kept a copy here
 
 cat > /etc/usb-gcode.conf <<EOF
 MOUNTPOINT="$MOUNTPOINT"
@@ -106,22 +106,25 @@ if ! mountpoint -q "$MOUNTPOINT" && [[ -n "$(ls -A "$MOUNTPOINT" 2>/dev/null)" ]
 fi
 
 echo "==> Moonraker component"
-ln -sfn "$LIB/usb_import.py" "$MOONRAKER_DIR/moonraker/components/usb_import.py"
+# Linked to the repo (runs as the normal user, like Moonraker itself): a git
+# update from Mainsail replaces the code, and the managed restart loads it.
+ln -sfn "$SRC/src/usb_import.py" "$MOONRAKER_DIR/moonraker/components/usb_import.py"
 CONF="$PRINTER_DATA/config/moonraker.conf"
-if ! grep -qF "$BEGIN" "$CONF"; then
-  cp -n "$CONF" "$CONF.bak-usbgcode"
-  {
-    printf '\n%s\n' "$BEGIN"
-    printf '[usb_import]\nusb_dir: USB\nimport_dir: Imported\n'
-    # Updates from Mainsail, if this came from a git clone with an origin
-    if ORIGIN="$(sudo -u "$TARGET_USER" git -C "$SRC" remote get-url origin 2>/dev/null)"; then
-      BRANCH="$(sudo -u "$TARGET_USER" git -C "$SRC" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
-      printf '\n[update_manager print-from-usb-klipper]\ntype: git_repo\npath: %s\norigin: %s\nprimary_branch: %s\nmanaged_services: klipper moonraker\ninstall_script: install.sh\n' \
-        "$SRC" "$ORIGIN" "$BRANCH"
-    fi
-    printf '%s\n' "$END"
-  } >> "$CONF"
-fi
+cp -n "$CONF" "$CONF.bak-usbgcode"
+# Drop any previous block (and trailing blank lines), then write a fresh one
+sed -i '/# >>> usb-gcode >>>/,/# <<< usb-gcode <<</d' "$CONF"
+sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$CONF"
+{
+  printf '\n%s\n' "$BEGIN"
+  printf '[usb_import]\nusb_dir: USB\nimport_dir: Imported\n'
+  # Updates from Mainsail, if this came from a git clone with an origin
+  if ORIGIN="$(sudo -u "$TARGET_USER" git -C "$SRC" remote get-url origin 2>/dev/null)"; then
+    BRANCH="$(sudo -u "$TARGET_USER" git -C "$SRC" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
+    printf '\n[update_manager print-from-usb-klipper]\ntype: git_repo\npath: %s\norigin: %s\nprimary_branch: %s\nmanaged_services: klipper moonraker\n' \
+      "$SRC" "$ORIGIN" "$BRANCH"
+  fi
+  printf '%s\n' "$END"
+} >> "$CONF"
 
 echo "==> Klipper macro"
 install -m 644 -o "$TARGET_USER" -g "$(id -gn "$TARGET_USER")" \
