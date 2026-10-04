@@ -86,7 +86,7 @@ class UsbImport:
                 usb_root = self._gcode_root() / self.usb_dir
                 state = self._mount_state(usb_root)
                 if last is not None and state != last:
-                    self._notify_root_changed()
+                    await self._refresh_usb_folder(usb_root)
                 last = state
             except asyncio.CancelledError:
                 raise
@@ -94,11 +94,15 @@ class UsbImport:
                 logging.exception("usb_import: mount watcher error")
             await asyncio.sleep(1.0)
 
-    def _notify_root_changed(self) -> None:
+    async def _refresh_usb_folder(self, usb_root: pathlib.Path) -> None:
+        # Mainsail/Fluidd rebuild a folder (and re-request its contents from
+        # Moonraker) when they are told it was deleted and created again.
         fm = self.server.lookup_component("file_manager")
-        root = str(fm.get_directory("gcodes"))
+        path = str(usb_root)
         try:
-            fm._sched_changed_event("root_update", "gcodes", root, immediate=True)
+            fm._sched_changed_event("delete_dir", "gcodes", path, immediate=True)
+            await asyncio.sleep(0.3)
+            fm._sched_changed_event("create_dir", "gcodes", path, immediate=True)
         except Exception:
             logging.exception("usb_import: could not send file list refresh")
 
