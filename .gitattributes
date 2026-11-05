@@ -4,3 +4,4 @@
 *.cfg text eol=lf
 *.md  text eol=lf
 VERSION text eol=lf
+LICENSE text eol=lf

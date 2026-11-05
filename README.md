@@ -203,6 +203,28 @@ python3 -m unittest discover -s tests -v
 
 ## Status
 
-Early version. Tested on Raspberry Pi OS 11 (Bullseye), Klipper + Moonraker,
-with Mainsail and KlipperScreen and FAT32 sticks. Fluidd uses the same Klipper
-print command but has not been tested yet. Feedback and issues are welcome.
+Early version. Tested on a Raspberry Pi 5, a 3B+ and a 3B, running Raspberry Pi
+OS / Debian 11 (Bullseye, Python 3.9) and Debian 13 (Trixie, Python 3.13), with
+Klipper + Moonraker, Mainsail and KlipperScreen, and FAT32 sticks. Fluidd uses the same Klipper print
+command but has not been tested yet. Feedback and issues are welcome.
+
+## License
+
+Copyright (C) 2026 lrafa97
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. It is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the [LICENSE](LICENSE) file for details.
+
+The Moonraker component runs inside Moonraker, which is also GPL-3.0 licensed.
+
+## Acknowledgements
+
+This project is in no way endorsed by the Klipper project. Please do not direct
+any support requests to the Klipper project.
+
+* [Klipper](https://www.klipper3d.org/) by [Kevin O'Connor](https://www.patreon.com/koconnor)
+* [Moonraker](https://github.com/Arksine/moonraker) by Arksine
