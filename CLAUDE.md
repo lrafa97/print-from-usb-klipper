@@ -1,5 +1,13 @@
 # CLAUDE.md — print-from-usb-klipper
 
+## Repositório público: regra obrigatória
+
+Este repositório é público, incluindo este ficheiro, os commits e o histórico. Vale para qualquer sessão do Claude, na web ou no PC.
+
+- Nunca publicar nomes de pessoas, nomes reais de máquinas, IPs reais, endereços MAC, números de série, nomes de redes Wi-Fi, caminhos de pastas pessoais, emails, tokens, palavras-passe, nomes de clientes, projetos de trabalho ou notas sobre o utilizador.
+- Usar sempre exemplos genéricos: `printer`, `192.168.1.50`, `<MAC>`, "máquina de teste".
+- Antes de cada commit, rever o conteúdo a publicar. Se tiver dados destes, substituí-los antes do push.
+
 Instruções para o Claude (e para quem pegar neste projeto). Versão do pacote à data de escrita: **1.1.4** (ficheiro `VERSION`).
 
 ## 1. Objetivo
